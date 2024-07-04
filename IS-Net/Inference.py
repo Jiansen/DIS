@@ -15,11 +15,38 @@ from torchvision.transforms.functional import normalize
 
 from models import *
 
+from PIL import Image
+
+def apply_mask(image_path, mask_path, output_path):
+    # Load the original image
+    image = Image.open(image_path).convert("RGBA")
+    # Load the mask image
+    mask = Image.open(mask_path).convert("L")  # Convert mask to grayscale
+
+    # Convert images to NumPy arrays
+    image_data = np.array(image)
+    mask_data = np.array(mask)
+
+    # Ensure the mask is the same size as the image
+    if mask_data.shape != image_data.shape[:2]:
+        raise ValueError("Mask size does not match image size")
+    
+    # Set alpha channel to 0 wherever the mask is not white
+    # image_data[:, :, 3] = np.where(mask_data == 255, 255, 0)
+    threshold = 128
+    image_data[:, :, 3] = np.where(mask_data >= threshold, 255, 0)
+
+
+    # Convert back to Image
+    result_image = Image.fromarray(image_data, 'RGBA')
+    # Save the resulting image
+    result_image.save(output_path, format='PNG')
+
 
 if __name__ == "__main__":
     dataset_path="../demo_datasets/your_dataset"  #Your dataset path
-    model_path="../saved_models/IS-Net/isnet-general-use.pth"  # the model path
-    result_path="../demo_datasets/your_dataset_result"  #The folder path that you want to save the results
+    model_path="../saved_models/isnet-general-use.pth"  # the model path
+    result_path="../demo_datasets/your_dataset_result_2"  #The folder path that you want to save the results
     input_size=[1024,1024]
     net=ISNetDIS()
 
@@ -50,4 +77,8 @@ if __name__ == "__main__":
             mi = torch.min(result)
             result = (result-mi)/(ma-mi)
             im_name=im_path.split('/')[-1].split('.')[0]
-            io.imsave(os.path.join(result_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+            mask_path = os.path.join(result_path, im_name + "_mask.png")
+            # io.imsave(os.path.join(result_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+            io.imsave(mask_path, (result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+
+            apply_mask(im_path, mask_path, os.path.join(result_path, im_name + "_result.png"))
