@@ -104,12 +104,21 @@ def plot_distribution_with_derivative(distribution, dis_save_path=None):
 
 def find_thresholds(cumulative_distribution, epsilon=0.001):
     first_derivative = np.diff(cumulative_distribution)
-    points = []
+    # points = []
+    ranges = []
+    enter_point = 0
     for point in range(1, len(first_derivative)):
         # print(f"first_derivative[point-1] {first_derivative[point-1]} first_derivative[point] {first_derivative[point]}")
         if first_derivative[point-1] > epsilon and first_derivative[point] < epsilon:
             # print(f"point {point}")
-            points.append(point)
+            # points.append(point)
+            enter_point = point
+        if first_derivative[point-1] < epsilon and first_derivative[point] > epsilon:
+            ranges.append((enter_point, point))
+    ranges.append((enter_point, len(first_derivative)))
+    points = [p for r in ranges for p in (r[0], (r[0]+r[1])//2, r[1])]
+    # remove duplicate points
+    points = list(set(points))
     
     return points
 
@@ -178,9 +187,9 @@ def batch_inference(input_folder_path, working_folder_path, model_path, result_f
 
 if __name__ == "__main__":
     model_path="../saved_models/isnet-general-use.pth"  # the model path
-    input_folder_path="./run_input/选图无水印"  #Your dataset path
-    working_folder_path="./run_output/20240714_working_3"  #The folder path that you want to save the working images
-    result_folder_path="./run_output/20240714_result_3"  #The folder path that you want to save the results
+    input_folder_path="./run_input/选图无水印2"  #Your dataset path
+    working_folder_path="./run_output/20240714_working_4"  #The folder path that you want to save the working images
+    result_folder_path="./run_output/20240714_result_4"  #The folder path that you want to save the results
 
     batch_inference(input_folder_path, working_folder_path, model_path, result_folder_path)
 
