@@ -127,7 +127,7 @@ def threshold_inference(im_path, mask_im_path, working_folder_path, result_folde
     thresholds = find_thresholds(cumulative_distribution, epsilon=0.1)
     # print(f"thresholds {thresholds}")
     # 加几个默认阈值
-    thresholds.extend([64, 128])
+    # thresholds.extend([64, 128])
     for threshold in thresholds:
         apply_mask(im_path, mask_im_path, os.path.join(result_folder_path, f"{im_name}.{threshold}.png"), threshold)
 
@@ -217,9 +217,9 @@ def batch_inference(input_folder_path, working_folder_path, model_path, result_f
 
 if __name__ == "__main__":
     model_path="../saved_models/isnet-general-use.pth"  # the model path
-    input_folder_path="./run_input/选图无水印2"  #Your dataset path
-    working_folder_path="./run_output/20240714_working_4"  #The folder path that you want to save the working images
-    result_folder_path="./run_output/20240714_result_4"  #The folder path that you want to save the results
+    input_folder_path="./run_input/选图无水印"  #Your dataset path
+    working_folder_path="./run_output/20240714_working_5"  #The folder path that you want to save the working images
+    result_folder_path="./run_output/20240714_result_5"  #The folder path that you want to save the results
 
     batch_inference(input_folder_path, working_folder_path, model_path, result_folder_path)
 
