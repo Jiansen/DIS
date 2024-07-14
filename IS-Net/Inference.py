@@ -16,8 +16,10 @@ from torchvision.transforms.functional import normalize
 from models import *
 
 from PIL import Image
+import matplotlib.pyplot as plt
 
-def apply_mask(image_path, mask_path, output_path):
+
+def apply_mask(image_path, mask_path, output_path, threshold=128):
     # Load the original image
     image = Image.open(image_path).convert("RGBA")
     # Load the mask image
@@ -32,21 +34,103 @@ def apply_mask(image_path, mask_path, output_path):
         raise ValueError("Mask size does not match image size")
     
     # Set alpha channel to 0 wherever the mask is not white
-    # image_data[:, :, 3] = np.where(mask_data == 255, 255, 0)
-    threshold = 128
+    # original_alpha = image_data[:, :, 3]
+    # image_data[:, :, 3] = np.where(mask_data >= threshold, 255, original_alpha)
     image_data[:, :, 3] = np.where(mask_data >= threshold, 255, 0)
-
 
     # Convert back to Image
     result_image = Image.fromarray(image_data, 'RGBA')
     # Save the resulting image
     result_image.save(output_path, format='PNG')
 
+def color_distribution(mask_image_path):
+    # 加载图像
+    img = Image.open(mask_image_path)
+    
+    # 确保图像是灰度图
+    if img.mode != 'L':
+        img = img.convert('L')
+    
+    # 将图像转换为numpy数组
+    data = np.array(img)
+    
+    # 统计每个颜色值的出现次数
+    counts = np.zeros(256, dtype=int)
+    for value in range(256):
+        counts[value] = np.count_nonzero(data == value)
+    
+    # 计算累积分布
+    cumulative_distribution = np.cumsum(counts)
+    total_pixels = data.size
+    cumulative_percentage = (cumulative_distribution / total_pixels) * 100
+    
+    return cumulative_percentage
 
-if __name__ == "__main__":
-    dataset_path="../demo_datasets/your_dataset"  #Your dataset path
-    model_path="../saved_models/isnet-general-use.pth"  # the model path
-    result_path="../demo_datasets/your_dataset_result_2"  #The folder path that you want to save the results
+def plot_distribution_with_derivative(distribution, dis_save_path=None):
+    first_derivative = np.diff(distribution)
+    second_derivative = np.diff(first_derivative)    
+    # 创建图表和两个坐标轴
+    fig, ax1 = plt.subplots(figsize=(8, 6))
+    
+    # 绘制累积分布
+    color = 'tab:blue'
+    ax1.set_xlabel('Grayscale Value')
+    ax1.set_ylabel('Cumulative Percentage (%)', color=color)
+    ax1.plot(distribution, color=color)
+    ax1.tick_params(axis='y', labelcolor=color)
+    ax1.grid(True)
+
+    # 创建第二个坐标轴用于一阶导数
+    ax2 = ax1.twinx()
+    color = 'tab:red'
+    ax2.set_ylabel('1st Derivative', color=color)
+    ax2.plot(range(1, len(distribution)), first_derivative, color=color)
+    ax2.tick_params(axis='y', labelcolor=color)
+
+    ax3 = ax1.twinx()
+    ax3.spines['right'].set_position(("axes", 1.15))  # 将第三个坐标轴稍微偏移
+    color = 'tab:green'
+    ax3.set_ylabel('Second Derivative', color=color)
+    ax3.plot(range(2, len(distribution)), second_derivative, color=color, label='Second Derivative')
+    ax3.tick_params(axis='y', labelcolor=color)
+
+    # 添加标题
+    plt.title('Cumulative Color Distribution with 1st and 2nd Derivatives')
+    
+    # 显示图表
+    # plt.show()
+    if dis_save_path:
+        plt.savefig(dis_save_path)
+
+def find_thresholds(cumulative_distribution, epsilon=0.001):
+    first_derivative = np.diff(cumulative_distribution)
+    points = []
+    for point in range(1, len(first_derivative)):
+        # print(f"first_derivative[point-1] {first_derivative[point-1]} first_derivative[point] {first_derivative[point]}")
+        if first_derivative[point-1] > epsilon and first_derivative[point] < epsilon:
+            # print(f"point {point}")
+            points.append(point)
+    
+    return points
+
+def threshold_inference(im_path, mask_im_path, working_folder_path, result_folder_path):
+    im_name = os.path.basename(im_path).split(".")
+    im_name = '.'.join(im_name[:-1])
+    cumulative_distribution = color_distribution(mask_im_path)
+    plot_distribution_with_derivative(cumulative_distribution, dis_save_path=os.path.join(working_folder_path, f"{im_name}_mask_distribution.png"))
+    thresholds = find_thresholds(cumulative_distribution, epsilon=0.1)
+    # print(f"thresholds {thresholds}")
+    # 加几个默认阈值
+    thresholds.extend([64, 128])
+    for threshold in thresholds:
+        apply_mask(im_path, mask_im_path, os.path.join(result_folder_path, f"{im_name}.{threshold}.png"), threshold)
+    
+def batch_inference(input_folder_path, working_folder_path, model_path, result_folder_path):
+    if not os.path.exists(working_folder_path):
+        os.makedirs(working_folder_path)
+    if not os.path.exists(result_folder_path):
+        os.makedirs(result_folder_path)
+
     input_size=[1024,1024]
     net=ISNetDIS()
 
@@ -56,10 +140,10 @@ if __name__ == "__main__":
     else:
         net.load_state_dict(torch.load(model_path,map_location="cpu"))
     net.eval()
-    im_list = glob(dataset_path+"/*.jpg")+glob(dataset_path+"/*.JPG")+glob(dataset_path+"/*.jpeg")+glob(dataset_path+"/*.JPEG")+glob(dataset_path+"/*.png")+glob(dataset_path+"/*.PNG")+glob(dataset_path+"/*.bmp")+glob(dataset_path+"/*.BMP")+glob(dataset_path+"/*.tiff")+glob(dataset_path+"/*.TIFF")
+    im_list = glob(input_folder_path+"/*.jpg")+glob(input_folder_path+"/*.JPG")+glob(input_folder_path+"/*.jpeg")+glob(input_folder_path+"/*.JPEG")+glob(input_folder_path+"/*.png")+glob(input_folder_path+"/*.PNG")+glob(input_folder_path+"/*.bmp")+glob(input_folder_path+"/*.BMP")+glob(input_folder_path+"/*.tiff")+glob(input_folder_path+"/*.TIFF")
     with torch.no_grad():
         for i, im_path in tqdm(enumerate(im_list), total=len(im_list)):
-            print("im_path: ", im_path)
+            # print("im_path: ", im_path)
             im = io.imread(im_path)
             if len(im.shape) < 3:
                 im = im[:, :, np.newaxis]
@@ -76,9 +160,39 @@ if __name__ == "__main__":
             ma = torch.max(result)
             mi = torch.min(result)
             result = (result-mi)/(ma-mi)
-            im_name=im_path.split('/')[-1].split('.')[0]
-            mask_path = os.path.join(result_path, im_name + "_mask.png")
-            # io.imsave(os.path.join(result_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+            # remove extension
+            im_name = os.path.basename(im_path).split(".")
+            im_name = '.'.join(im_name[:-1])
+
+            # copy input image to working folder and result folder
+            os.system(f"cp {im_path} {working_folder_path}")
+            os.system(f"cp {im_path} {result_folder_path}")
+
+            mask_path = os.path.join(working_folder_path, im_name + "_mask.png")
+            # io.imsave(os.path.join(result_folder_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
             io.imsave(mask_path, (result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
 
-            apply_mask(im_path, mask_path, os.path.join(result_path, im_name + "_result.png"))
+            # cumulative_distribution = color_distribution(mask_path)
+            # plot_distribution_with_derivative(cumulative_distribution, dis_save_path=os.path.join(result_folder_path, f"{im_name}_mask_distribution.png"))
+            threshold_inference(im_path, mask_path, working_folder_path, result_folder_path)
+
+if __name__ == "__main__":
+    model_path="../saved_models/isnet-general-use.pth"  # the model path
+    input_folder_path="./run_input/选图无水印"  #Your dataset path
+    working_folder_path="./run_output/20240714_working_3"  #The folder path that you want to save the working images
+    result_folder_path="./run_output/20240714_result_3"  #The folder path that you want to save the results
+
+    batch_inference(input_folder_path, working_folder_path, model_path, result_folder_path)
+
+
+
+    # batch_inference(input_folder_path, model_path, result_folder_path)
+    # batch_threshold_inference(result_folder_path)
+
+    # cumulative_distribution = color_distribution("./run_output/20240714_result/7.60069_mask.png")
+    # plot_distribution_with_derivative(cumulative_distribution, dis_save_path="./run_output/20240714_result/7.60069_mask_distribution.png")
+
+    # thresholds = find_thresholds(cumulative_distribution, epsilon=0.1)
+    # print(f"thresholds {thresholds}")
+    # for threshold in thresholds:
+    #     apply_mask(f"{input_folder_path}/7.60069.jpg", f"{result_folder_path}/7.60069_mask.png", f"{result_folder_path}/7.60069_mask.{threshold}.png", threshold)

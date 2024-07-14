@@ -1,3 +1,6 @@
+.DS_Store
 __pycache__
 demo_datasets
 saved_models
+IS-Net/run_input
+IS-Net/run_output
