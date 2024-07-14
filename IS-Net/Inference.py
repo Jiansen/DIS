@@ -1,20 +1,17 @@
 import os
-import time
 import numpy as np
 from skimage import io
 import time
 from glob import glob
 from tqdm import tqdm
 
-import torch, gc
-import torch.nn as nn
-from torch.autograd import Variable
-import torch.optim as optim
+import torch
 import torch.nn.functional as F
 from torchvision.transforms.functional import normalize
 
-from models import *
+from models import ISNetDIS
 
+from multiprocessing import Process, Semaphore
 from PIL import Image
 import matplotlib.pyplot as plt
 
@@ -133,16 +130,66 @@ def threshold_inference(im_path, mask_im_path, working_folder_path, result_folde
     thresholds.extend([64, 128])
     for threshold in thresholds:
         apply_mask(im_path, mask_im_path, os.path.join(result_folder_path, f"{im_name}.{threshold}.png"), threshold)
-    
+
+def single_inference(im_path, net, result_folder_path):
+    print(f"single_inference 0 {im_path}")
+    input_size=[1024,1024]
+
+    im = io.imread(im_path)
+    print(f"single_inference 0.1 {im_path}")
+    if len(im.shape) < 3:
+        im = im[:, :, np.newaxis]
+    im_shp=im.shape[0:2]
+    print(f"single_inference 0.2 {im_path}")
+    im_tensor = torch.tensor(im, dtype=torch.float32).permute(2,0,1)
+    print(f"single_inference 0.3 {im_path}")
+    im_tensor = F.upsample(torch.unsqueeze(im_tensor,0), input_size, mode="bilinear").type(torch.uint8)
+    print(f"single_inference 0.4 {im_path}")
+    image = torch.divide(im_tensor,255.0)
+    print(f"single_inference 0.5 {im_path}")
+    image = normalize(image,[0.5,0.5,0.5],[1.0,1.0,1.0])
+    print(f"single_inference 1 {im_path}")
+
+    if torch.cuda.is_available():
+        image=image.cuda()
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")  # Define MPS as the device
+        net.to(device)
+        image = image.to(device)  # Move the image to MPS
+        print(f"single_inference 1.1 {im_path} - Using MPS")
+
+    result=net(image)
+    print(f"single_inference 2 {im_path}")    
+    result=torch.squeeze(F.upsample(result[0][0],im_shp,mode='bilinear'),0)
+    ma = torch.max(result)
+    mi = torch.min(result)
+    result = (result-mi)/(ma-mi)
+    print(f"single_inference 3 {im_path}")
+    # remove extension
+    im_name = os.path.basename(im_path).split(".")
+    im_name = '.'.join(im_name[:-1])
+
+    # copy input image to working folder and result folder
+    os.system(f"cp {im_path} {working_folder_path}")
+    os.system(f"cp {im_path} {result_folder_path}")
+    print(f"single_inference 4 {im_path}")
+
+    mask_path = os.path.join(working_folder_path, im_name + "_mask.png")
+    # io.imsave(os.path.join(result_folder_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+    io.imsave(mask_path, (result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
+
+    # cumulative_distribution = color_distribution(mask_path)
+    # plot_distribution_with_derivative(cumulative_distribution, dis_save_path=os.path.join(result_folder_path, f"{im_name}_mask_distribution.png"))
+    print(f"single_inference 5 {im_path}")
+    threshold_inference(im_path, mask_path, working_folder_path, result_folder_path)
+    print(f"single_inference 6 {im_path}")
+
 def batch_inference(input_folder_path, working_folder_path, model_path, result_folder_path):
     if not os.path.exists(working_folder_path):
         os.makedirs(working_folder_path)
     if not os.path.exists(result_folder_path):
         os.makedirs(result_folder_path)
-
-    input_size=[1024,1024]
     net=ISNetDIS()
-
     if torch.cuda.is_available():
         net.load_state_dict(torch.load(model_path))
         net=net.cuda()
@@ -150,40 +197,23 @@ def batch_inference(input_folder_path, working_folder_path, model_path, result_f
         net.load_state_dict(torch.load(model_path,map_location="cpu"))
     net.eval()
     im_list = glob(input_folder_path+"/*.jpg")+glob(input_folder_path+"/*.JPG")+glob(input_folder_path+"/*.jpeg")+glob(input_folder_path+"/*.JPEG")+glob(input_folder_path+"/*.png")+glob(input_folder_path+"/*.PNG")+glob(input_folder_path+"/*.bmp")+glob(input_folder_path+"/*.BMP")+glob(input_folder_path+"/*.tiff")+glob(input_folder_path+"/*.TIFF")
+    
+    # Create a semaphore that allows only N active processes at a time
+    N = 5
+    sem = Semaphore(N)
     with torch.no_grad():
+        # processes = [Process(target=single_inference, args=(im_path, net, result_folder_path)) for i, im_path in tqdm(enumerate(im_list), total=len(im_list))]
+        # for p in processes:
+        #     p.start()
+        # for p in processes:
+        #     p.join()
+
         for i, im_path in tqdm(enumerate(im_list), total=len(im_list)):
             # print("im_path: ", im_path)
-            im = io.imread(im_path)
-            if len(im.shape) < 3:
-                im = im[:, :, np.newaxis]
-            im_shp=im.shape[0:2]
-            im_tensor = torch.tensor(im, dtype=torch.float32).permute(2,0,1)
-            im_tensor = F.upsample(torch.unsqueeze(im_tensor,0), input_size, mode="bilinear").type(torch.uint8)
-            image = torch.divide(im_tensor,255.0)
-            image = normalize(image,[0.5,0.5,0.5],[1.0,1.0,1.0])
+            # run in a sub-process
 
-            if torch.cuda.is_available():
-                image=image.cuda()
-            result=net(image)
-            result=torch.squeeze(F.upsample(result[0][0],im_shp,mode='bilinear'),0)
-            ma = torch.max(result)
-            mi = torch.min(result)
-            result = (result-mi)/(ma-mi)
-            # remove extension
-            im_name = os.path.basename(im_path).split(".")
-            im_name = '.'.join(im_name[:-1])
-
-            # copy input image to working folder and result folder
-            os.system(f"cp {im_path} {working_folder_path}")
-            os.system(f"cp {im_path} {result_folder_path}")
-
-            mask_path = os.path.join(working_folder_path, im_name + "_mask.png")
-            # io.imsave(os.path.join(result_folder_path,im_name+".png"),(result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
-            io.imsave(mask_path, (result*255).permute(1,2,0).cpu().data.numpy().astype(np.uint8))
-
-            # cumulative_distribution = color_distribution(mask_path)
-            # plot_distribution_with_derivative(cumulative_distribution, dis_save_path=os.path.join(result_folder_path, f"{im_name}_mask_distribution.png"))
-            threshold_inference(im_path, mask_path, working_folder_path, result_folder_path)
+            single_inference(im_path, net, result_folder_path)
+            
 
 if __name__ == "__main__":
     model_path="../saved_models/isnet-general-use.pth"  # the model path
